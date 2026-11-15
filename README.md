@@ -1,56 +1,84 @@
-# Welcome to your Expo app 👋
+# Hub
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A small personal app center. One app so far: **Langue · 언어**, a live French ↔ Korean
+quiz for two players, each on their own phone.
 
-## Get started
+Expo (React Native + web) on the front, Supabase on the back. There is no server of our
+own: match state is rows in Postgres, Supabase Realtime pushes row changes to both
+phones, and the game rules are Postgres functions.
 
-1. Install dependencies
+## First-time setup
 
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Point the app at it:
    ```bash
-   npm install
+   cp .env.example .env.local
    ```
-
-2. Start the app
-
+   Fill in both values from **Project Settings → API**.
+3. Create the database (no Docker needed, this talks to the hosted project):
    ```bash
-   npx expo start
+   npx supabase login
+   npx supabase init
+   npx supabase link --project-ref YOUR-PROJECT-REF
+   npx supabase db push
    ```
+4. Paste `supabase/seed.sql` into the Supabase **SQL editor** and run it. That gives you
+   a 24-word starter deck.
+5. Run it:
+   ```bash
+   npm start
+   ```
+   Scan the QR code with **Expo Go** on each phone, or press `w` for the browser.
+6. Each of you creates an account in the app. **Then turn sign-ups off**
+   (Authentication → Sign In / Providers → *Allow new users to sign up*). The app's URL
+   and key are public by design, so until you do, anyone who finds them can register.
 
-In the output, you'll find options to open the app in a
+### Deck generator (optional)
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Needs an Anthropic API key. Each generated deck costs a few cents.
 
 ```bash
-npm run reset-project
+npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+npx supabase functions deploy generate-deck
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+Generated words are stored unverified and cannot appear in a match until one of you
+approves them on the **Words** screen.
 
-### Other setup steps
+## Day to day
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+| | |
+|---|---|
+| `npm start` | dev server (Expo Go / web) |
+| `npm run test:sql` | runs the migrations and the game-rules test on an in-memory Postgres |
+| `npm run typecheck` | TypeScript |
+| `npm run lint` | ESLint |
 
-## Learn more
+## Where things are
 
-To learn more about developing your project with Expo, look at the following resources:
+| Path | What |
+|---|---|
+| `supabase/migrations/` | Schema, row-level security, and the game rules. **Start reading here.** |
+| `supabase/tests/game_rules.sql` | Plays a whole match as two players plus an outsider and asserts the rules hold |
+| `supabase/functions/generate-deck/` | Edge function: Claude → unverified words |
+| `src/hooks/use-match.ts` | The realtime subscription and the calls that move a match forward |
+| `src/app/` | Screens. `index.tsx` is the hub; adding an app is adding a route and a line there |
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## How a match works
 
-## Join the community
+1. `create_match` makes a lobby and a 6-character code. `join_match` with that code adds
+   the second player and deals round 1.
+2. Each phone reads the live round through the `round_views` view, which hides the right
+   answer until the round is over. The `rounds` table itself is unreadable by clients.
+3. `submit_answer` scores you once (the primary key on `answers` makes it write-once)
+   and tells you the right option.
+4. When everyone has answered or the clock runs out, both phones call `advance_round`.
+   A row lock plus an expected-round check means exactly one of those calls does anything.
 
-Join our community of developers creating universal apps.
+## Known shortcuts
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Search the code for `shortcut:` to find each one with its upgrade path.
+
+- Any signed-in user can approve or delete words (fine for two owners).
+- The session is stored unencrypted on the device, as Supabase documents for Expo.
+- The countdown trusts the phone's clock for display; scoring never does.
